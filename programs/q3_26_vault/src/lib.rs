@@ -16,8 +16,7 @@ pub mod q3_26_vault {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        ctx.accounts.initialize()?;
-        Ok(())
+        ctx.accounts.initialize(&ctx.bumps)
     }
 
     pub fn deposit(ctx: Context<Deposit>) -> Result<()> {
