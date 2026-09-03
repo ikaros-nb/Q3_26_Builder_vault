@@ -276,6 +276,6 @@ still correct there. `cargo check` passes with no errors and no warnings.
 - [x] Replace `data_len()` with `0` in the rent-exempt computation, for explicitness.
 - [ ] Write section 4 (test plan) of this file.
 - [x] Implement `deposit`.
-- [ ] Implement `withdraw`, handling the rent-exempt forbidden zone and the amount bounds.
+- [x] Implement `withdraw`, handling the rent-exempt forbidden zone and the amount bounds.
 - [ ] Run the thought experiment to completion: remove `Signer` from `user` and write the test
       that proves the exploit, to verify I really understand the `Signer` + `seeds` chain.
