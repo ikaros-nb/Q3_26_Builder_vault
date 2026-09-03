@@ -1,17 +1,44 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{Transfer, transfer};
 
-use crate::constants::VAULT_SEED;
+use crate::constants::{STATE_SEED, VAULT_SEED};
+use crate::error::ErrorCode;
 use crate::state::VaultState;
 
 #[derive(Accounts)]
 pub struct Deposit<'info> {
-    #[account(mut, seeds = [VAULT_SEED], bump)]
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        seeds = [STATE_SEED, user.key().as_ref()],
+        bump = vault_state.state_bump,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, user.key().as_ref()],
+        bump = vault_state.vault_bump,
+    )]
     pub vault: Account<'info, VaultState>,
-    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 impl<'info> Deposit<'info> {
-    pub fn deposit(&mut self) -> Result<()> {
+    pub fn deposit(&mut self, amount: u64) -> Result<()> {
+        require!(amount > 0, ErrorCode::InvalidAmount);
+
+        let cpi_program = self.system_program.key();
+        let cpi_accounts = Transfer {
+            from: self.user.to_account_info(),
+            to: self.vault.to_account_info(),
+        };
+        let cpi_tx = CpiContext::new(cpi_program, cpi_accounts);
+
+        transfer(cpi_tx, amount)?;
+
         Ok(())
     }
 }

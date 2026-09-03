@@ -19,9 +19,8 @@ pub mod q3_26_vault {
         ctx.accounts.initialize(&ctx.bumps)
     }
 
-    pub fn deposit(ctx: Context<Deposit>) -> Result<()> {
-        ctx.accounts.deposit()?;
-        Ok(())
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        ctx.accounts.deposit(amount)
     }
 
     pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {
