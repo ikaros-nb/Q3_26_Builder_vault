@@ -30,7 +30,7 @@ pub struct Initialize<'info> {
 
 impl<'info> Initialize<'info> {
     pub fn initialize(&mut self, bumps: &InitializeBumps) -> Result<()> {
-        let rent_exempt = Rent::get()?.minimum_balance(self.vault.data_len());
+        let rent_exempt = Rent::get()?.minimum_balance(0);
         let cpi_program = self.system_program.key();
         let cpi_accounts = Transfer {
             from: self.user.to_account_info(),

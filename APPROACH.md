@@ -273,7 +273,7 @@ still correct there. `cargo check` passes with no errors and no warnings.
 
 **What I will do next, without AI:**
 
-- [ ] Replace `data_len()` with `0` in the rent-exempt computation, for explicitness.
+- [x] Replace `data_len()` with `0` in the rent-exempt computation, for explicitness.
 - [ ] Write section 4 (test plan) of this file.
 - [ ] Implement `deposit`.
 - [ ] Implement `withdraw`, handling the rent-exempt forbidden zone and the amount bounds.
