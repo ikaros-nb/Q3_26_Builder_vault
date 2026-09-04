@@ -21,7 +21,7 @@ pub struct Withdraw<'info> {
         seeds = [VAULT_SEED, user.key().as_ref()],
         bump = vault_state.vault_bump,
     )]
-    pub vault: Account<'info, VaultState>,
+    pub vault: SystemAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -45,7 +45,7 @@ impl<'info> Withdraw<'info> {
         let signer_seeds: [&[&[u8]]; 1] = [&[
             VAULT_SEED,
             self.user.to_account_info().key.as_ref(),
-            &[self.vault.vault_bump]
+            &[self.vault_state.vault_bump]
         ]];
         let cpi_tx = CpiContext::new_with_signer(
             cpi_program,
