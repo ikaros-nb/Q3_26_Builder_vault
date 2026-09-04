@@ -271,11 +271,182 @@ so `.key()` is correct. The fields of CPI account structs, on the other hand, re
 still correct there. `cargo check` passes with no errors and no warnings.
 **Lesson: verify the version before accepting an API correction, including from an AI.**
 
+---
+
+### 2026-09-04 — `deposit`, `withdraw`, `close` and the code review
+
+> Quotes below were dictated in English; only transcription artifacts have been cleaned.
+
+**What I did:**
+Implemented `deposit` and `withdraw`, then rebuilt `close`. Submitted all three for review.
+
+**What broke — three bugs, all found by review, none found by the compiler:**
+
+1. **I declared the vault as `Account<'info, VaultState>` in both `deposit` and `withdraw`**, where
+   `initialize` correctly uses `SystemAccount<'info>`. The code compiled and would have failed on
+   **every single call**, because `Account<'info, T>` asserts three things my vault satisfies none
+   of: owner is my program (it is the System Program), the first 8 bytes are `VaultState`'s
+   discriminator (there are 0 bytes of data), and the remaining bytes deserialize into `T` (there
+   is nothing to deserialize). The runtime error is `AccountOwnedByWrongProgram`.
+
+   This was the exact concept of my 09-03 session, and I got it wrong in code the very next day.
+   Understanding a concept in conversation is not the same as having it available while writing.
+
+2. **I read the bump from the wrong account** — `self.vault.vault_bump` instead of
+   `self.vault_state.vault_bump`. This only compiled *because* of bug 1: since I had wrongly typed
+   the vault as `VaultState`, the field access type-checked. The wrong type did not merely fail to
+   help me — it **silenced an independent second bug**. Fixing bug 1 turned this line into a
+   compile error immediately.
+
+3. **My rent-exemption guard could not do its job.** I wrote
+   `require!(vault_balance - amount >= rent_exempt, ...)`. The subtraction is evaluated *inside*
+   the condition, before the comparison, so when `amount > vault_balance` it panics while
+   computing the condition — the `require!` never gets to reject anything. A guard cannot reject
+   the input that destroys the guard.
+
+   With `overflow-checks = true` the caller gets `ProgramFailedToComplete` instead of my typed
+   error. With `overflow-checks = false` the guard is **bypassed entirely**:
+   `890_880 - u64::MAX` wraps to `890_881`, which is `>= 890_880`, so the check passes. Verified
+   by running it. One config flag separated "confusing" from "exploitable".
+
+**Two errors of mine in the review itself, worth recording:**
+
+- I merged two different triples. `init`'s three operations are *allocate / assign / transfer*.
+  `Account<'info, T>`'s three validations are *owner / discriminator / deserialize*. `init`
+  **creates**; `Account<T>` **validates**. Different jobs, different lists.
+- I stated that an underflow "wraps silently" while `overflow-checks = true` — inverting my own
+  point 12 from the day before. With the flag on it **panics**; without it, it wraps.
+
+---
+
+**On the division of labour between `withdraw` and `close`:**
+
+> **My own words:** Am I meant to work out that I should close the account after `withdraw` to
+> refund the rent to the payer? To close the vault there will be the `close` instruction.
+
+**Reconciliation — this supersedes point 11 of the 09-03 entry, which said the opposite.**
+Point 11 claimed that withdrawing everything down to 0 is allowed. My code forbids it, and that
+is **deliberate**: `withdraw` never breaks rent exemption, and `close` is the only path that
+empties the vault. Leaving point 11 as written, per the append-only rule.
+
+---
+
+**On the ordering of the `close` constraint:**
+
+> **My own words:** Inside the `close` instruction we have to withdraw everything from the vault
+> balance before being able to close the account. After the `close` function block has ended, the
+> `close` constraint will be run and the account will be closed internally — and by internally I
+> mean that because we are using an Anchor constraint, Anchor will do that for us. On the other
+> hand, if we withdraw using the transfer, we drain the vault to exactly zero, and in Solana the
+> account will be deleted.
+
+Both correct. The `close` constraint executes in Anchor's **exit phase**, after the instruction
+body returns, which is why my body can still read `self.vault_state.vault_bump` at that point.
+
+**Where I got stuck:**
+
+> **My own words:** This is where I am struggling a little, because if the account will be deleted
+> automatically, maybe the `close` constraint is not really necessary. Or maybe I misunderstood
+> and the `close` constraint will not close the account by itself, because it will be closed
+> automatically once the vault drains to exactly zero — so the `close` constraint is just deciding
+> who to return the rent-exempt amount to.
+
+**What changed in my understanding — there are TWO accounts, not one:**
+
+I was reasoning as if a single account were being closed by two competing mechanisms. In fact
+`close = user` sits on `vault_state`, **not** on `vault`. They are different accounts with
+different owners, and each needs its own closing mechanism:
+
+|                  | `vault`                  | `vault_state`                    |
+| ---------------- | ------------------------ | -------------------------------- |
+| Type             | `SystemAccount`          | `Account<'info, VaultState>`     |
+| Owner            | System Program           | **my program**                   |
+| Data             | 0 bytes                  | 8 (discriminator) + 2 (bumps)    |
+| Rent it holds    | 890,880                  | **960,480**                      |
+| Closed by        | my manual CPI `transfer` | Anchor's `close = user`          |
+
+They are not redundant. Remove `close = user` and `vault_state` survives forever with **960,480
+lamports locked inside it**, which the user paid during `initialize` and would never recover.
+
+**And the reason the two mechanisms differ is the same rule as everything else:**
+
+> **My own words:** I abandoned `CloseAccount` because Anchor will do that for us for the
+> `vault_state` account — only my program is the owner of `vault_state`, so Anchor can do it on my
+> behalf. I can't do that for the vault account, because if I had added the `close` constraint to
+> the vault account it would fail, since the vault account is owned by the System Program and only
+> the owner can debit the account's lamports.
+
+*Only the owner program can debit an account.* That single rule has now decided four separate
+design questions in this program: why the vault is a `SystemAccount`, why `init` on it would break
+`withdraw`, why `withdraw` needs `new_with_signer`, and why `close` needs two different closing
+paths in one instruction.
+
+**Two corrections to that answer:**
+
+- `CloseAccount` is not Anchor's — it belongs to **SPL Token** (`anchor_spl::token::CloseAccount`)
+  and closes *token accounts* owned by the *Token Program*. Neither of my accounts is a token
+  account, and `anchor_spl` is not even in my `Cargo.toml`, so it could never have compiled.
+- `close = user` on a `SystemAccount` would not "fail at runtime" — it **would not compile**.
+  `AccountsClose` is implemented for `Account`, `LazyAccount`, `AccountLoader`, `InterfaceAccount`,
+  `Box<T>` and `Option<T>`. `SystemAccount` implements `AccountsExit` but deliberately **not**
+  `AccountsClose`.
+
+---
+
+**On calling `close` twice:**
+
+> **My own words:** If someone calls `close` twice, the first time it will work, but the second
+> time we will get an error saying the account isn't allocated.
+
+Correct instinct; the precise name is **`AccountNotInitialized`**. Anchor's `close`
+(`anchor-lang-1.1.2/src/common.rs:7-17`) does four things:
+
+```rust
+sol_destination.add_lamports(info.lamports())?;   // all lamports → user
+**info.lamports.borrow_mut() = 0;                 // account now holds 0
+info.assign(&system_program::ID);                 // owner → System Program
+info.resize(0)                                    // data truncated to 0 bytes
+```
+
+The end state — owner is the System Program, lamports are 0 — is exactly the branch at
+`account.rs:315` that returns `AccountNotInitialized`. Step 3 is the important one: Anchor hands
+the account **back to the System Program**, which is what makes reinitialization attacks fail and
+leaves a closed account indistinguishable from one that never existed.
+
+---
+
+**On checked arithmetic:**
+
+> **My own words:** You always have to use `.checked_add` / `.checked_sub` instead of the `+` and
+> `-` operators. `checked_sub` will automatically check the value; if it would underflow there
+> will be no program crash — instead our domain `VaultError` is triggered.
+
+**The limit on "always":** use checked arithmetic on any value I don't control — user-supplied
+parameters, lamport balances, anything read from an account. Plain operators are fine for
+compile-time constants or values whose bounds I have already proven; `checked_*` everywhere adds
+noise that hides the places that genuinely matter.
+
+**And the real motivation is not "avoid the wrap."** With `overflow-checks = true` a panic is
+*safe* — nothing is silently corrupted. The two actual reasons are: (1) a panic gives the caller
+`ProgramFailedToComplete` instead of my typed `VaultError`, and (2) my panic-safety would depend
+on one line in `Cargo.toml` that anyone could flip, whereas `checked_sub` is correct regardless of
+the build profile. **Never let a security property depend on a build flag.**
+
+---
+
+**The lesson underneath all three bugs — the type system:**
+
+Three times in one day, the *correct* type either caught a mistake at build time or would have
+prevented it: the wrong vault type silenced the wrong-bump bug; fixing it turned that bug into an
+immediate compile error; and `close` on a `SystemAccount` is refused by the compiler rather than
+by the runtime. Anchor did not encode "only owners can debit" as a runtime check I have to hope a
+test triggers — it encoded it in the **type system, so the mistake cannot ship**. A wrong type
+annotation does not merely fail to help me; it actively disables the compiler as a safety net.
+
 **What I will do next, without AI:**
 
 - [x] Replace `data_len()` with `0` in the rent-exempt computation, for explicitness.
 - [ ] Write section 4 (test plan) of this file.
 - [x] Implement `deposit`.
 - [x] Implement `withdraw`, handling the rent-exempt forbidden zone and the amount bounds.
-- [ ] Run the thought experiment to completion: remove `Signer` from `user` and write the test
-      that proves the exploit, to verify I really understand the `Signer` + `seeds` chain.
+- [ ] Run the thought experiment to completion: remove `Signer` from `user` and write the test that proves the exploit, to verify I really understand the `Signer` + `seeds` chain.
