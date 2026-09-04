@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program::{Transfer, transfer};
 
 use crate::constants::{STATE_SEED, VAULT_SEED};
-use crate::error::ErrorCode;
+use crate::error::VaultError;
 use crate::state::VaultState;
 
 #[derive(Accounts)]
@@ -28,13 +28,13 @@ pub struct Withdraw<'info> {
 
 impl<'info> Withdraw<'info> {
     pub fn withdraw(&mut self, amount: u64) -> Result<()> {
-        require!(amount > 0, ErrorCode::InvalidAmount);
+        require!(amount > 0, VaultError::InvalidAmount);
 
         let vault_balance = self.vault.get_lamports();
         let rent_exempt = Rent::get()?.minimum_balance(0);
         require!(
             vault_balance - amount >= rent_exempt,
-            ErrorCode::InsufficientVaultBalance
+            VaultError::InsufficientVaultBalance
         );
 
         let cpi_program = self.system_program.key();

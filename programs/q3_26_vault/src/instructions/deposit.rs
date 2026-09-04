@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program::{Transfer, transfer};
 
 use crate::constants::{STATE_SEED, VAULT_SEED};
-use crate::error::ErrorCode;
+use crate::error::VaultError;
 use crate::state::VaultState;
 
 #[derive(Accounts)]
@@ -28,7 +28,7 @@ pub struct Deposit<'info> {
 
 impl<'info> Deposit<'info> {
     pub fn deposit(&mut self, amount: u64) -> Result<()> {
-        require!(amount > 0, ErrorCode::InvalidAmount);
+        require!(amount > 0, VaultError::InvalidAmount);
 
         let cpi_program = self.system_program.key();
         let cpi_accounts = Transfer {
