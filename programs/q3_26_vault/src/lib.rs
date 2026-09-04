@@ -28,7 +28,6 @@ pub mod q3_26_vault {
     }
 
     pub fn close(ctx: Context<Close>) -> Result<()> {
-        ctx.accounts.close()?;
-        Ok(())
+        ctx.accounts.close()
     }
 }
