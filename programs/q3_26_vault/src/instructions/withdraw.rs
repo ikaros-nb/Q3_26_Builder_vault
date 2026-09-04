@@ -33,7 +33,7 @@ impl<'info> Withdraw<'info> {
         let vault_balance = self.vault.get_lamports();
         let rent_exempt = Rent::get()?.minimum_balance(0);
         require!(
-            vault_balance - amount >= rent_exempt,
+            vault_balance.checked_sub(amount) >= Some(rent_exempt),
             VaultError::InsufficientVaultBalance
         );
 
