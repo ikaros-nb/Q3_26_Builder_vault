@@ -3,7 +3,7 @@ mod common;
 use common::*;
 
 #[test]
-fn test_initialize() {
+fn test_withdraw() {
     let mut setup = Setup::new();
 
     let transaction = setup.initialize()
